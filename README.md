@@ -3,6 +3,17 @@ Palo Alto Networks ContentPack Downloader
 
 Checks for the latest content pack and downloads it if needed.
 
+Install
+-------
+
+Download the files in this repository.
+
+Install mechanize:
+
+    pip install mechanize
+    - or -
+    easy_install mechanize
+
 Configuration
 -------------
 
