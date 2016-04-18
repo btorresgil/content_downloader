@@ -24,19 +24,32 @@ class LoginError(StandardError):
 class UpdateError(StandardError):
     pass
 
-class FetchStatusError(StandardError):
+class UnknownPackage(StandardError):
     pass
 
 class ContentDownloader(object):
 
-    PREFIX = "panupv2-all-contents"
+    PACKAGE = {
+        "appthreat": "content/panupv2-all-contents",
+        "app": "content/panupv2-all-apps",
+        "antivirus": "virus/panup-all-antivirus",
+        "wildfire": "wildfire/panup-all-wildfire",
+        "wildfire2": "wildfire/panupv2-all-wildfire",
+    }
 
     SUPPORT_URL = "https://support.paloaltonetworks.com"
     UPDATE_URL = "https://support.paloaltonetworks.com/Updates/DynamicUpdates"
 
-    def __init__(self, username, password, debug=False):
+    def __init__(self, username, password, package="appthreat", debug=False):
+        if package is None:
+            package = "appthreat"
+        if package not in self.PACKAGE:
+            raise UnknownPackage("Unknown package type: %s" % package)
         self.username = username
         self.password = password
+        self.package = package
+        self.path = self.PACKAGE[package]
+        self.prefix = self.path.split("/")[-1]
         self.latestversion = None
         self.fileurl = None
         self.cj = cookielib.LWPCookieJar()
@@ -84,7 +97,7 @@ class ContentDownloader(object):
         self._save_cookies()
 
     def check(self):
-        logging.info("Checking for new content updates")
+        logging.info("Checking for new content updates: %s" % self.package)
         result = self._check()
         needlogin = False
         if result.find("<h1>Single Sign On</h1>") != -1:
@@ -98,13 +111,16 @@ class ContentDownloader(object):
             self.login()
             logging.info("Checking for new content updates (2nd attempt)")
             result = self._check()
-        file_url = "https://downloads.paloaltonetworks.com/content/" + self.PREFIX
+        file_url = "https://downloads.paloaltonetworks.com/" + self.path
         try:
-            # Grab the first link, which is the download link for the first dynamic update
+            # Grab the first link that matches the regex,
+            # which is the download link for the first dynamic update
             url = list(self.browser.links(url_regex=file_url))[0].url
         except IndexError:
             raise UpdateError("Unable to get content update list")
+        # Add the version to the regex to extract the latest version number
         file_regex = file_url + "-([\d-]*)\?"
+        # Get the version
         version = re.search(file_regex, url).group(1)
         self.latestversion = version
         self.fileurl = url
@@ -117,7 +133,7 @@ class ContentDownloader(object):
     def download(self, download_dir):
         if self.latestversion is not None and self.fileurl is not None:
             os.chdir(download_dir)
-            filename = self.PREFIX+"-"+self.latestversion
+            filename = self.prefix+"-"+self.latestversion
             self.browser.retrieve(self.fileurl, filename)
             return filename
 
@@ -139,6 +155,9 @@ def get_config(filename):
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Download the latest Palo Alto Networks dynamic content update')
     parser.add_argument('-v', '--verbose', action='count', help="Verbose (-vv for extra verbose)")
+    parser.add_argument('-p', '--package', help="Options: appthreat, app, antivirus, wildfire (for PAN-OS 7.0 and"
+                                                " lower), or wildfire2 (for PAN-OS 7.1 and higher). If ommited, "
+                                                "defaults to 'appthreat'.")
     return parser.parse_args()
 
 
@@ -164,18 +183,18 @@ def main():
     # Config file (for support account credentials)
     username, password, download_dir = get_config('content_downloader.conf')
 
+    # Create contentdownloader object
+    content_downloader = ContentDownloader(username=username, password=password, package=options.package, debug=debugenabled)
+
+    # Check latest version. Login if necessary.
+    latestversion, fileurl = content_downloader.check()
+
     # Get previously downloaded versions from download directory
     downloaded_versions = []
     for f in os.listdir(download_dir):
-        match = re.match(ContentDownloader.PREFIX + "-([\d-]*)$", f)
+        match = re.match(content_downloader.prefix + "-([\d-]*)$", f)
         if match is not None:
             downloaded_versions.append(match.group(1))
-
-    # Create contentdownloader object and login
-    content_downloader = ContentDownloader(username=username, password=password, debug=debugenabled)
-
-    # Check latest version
-    latestversion, fileurl = content_downloader.check()
 
     # Check if already downloaded latest and do nothing
     if latestversion in downloaded_versions:

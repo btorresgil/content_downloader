@@ -14,8 +14,8 @@ Install mechanize:
     - or -
     easy_install mechanize
 
-Configuration
--------------
+Configure
+---------
 
 Modify content_downloader.conf and fill in the ``username`` and
 ``password`` arguments with your Palo Alto Networks support
@@ -41,6 +41,22 @@ Run the python file like this:
 You can add -v for verbose, or -vv for extra verbose:
 
     python content_downloader.py -v
+
+By default, the script will download the latest *App+Threat* content pack.
+Download other packages using the `-p` argument:
+
+    python content_downloader.py -p antivirus
+
+Possible values for `-p` argument:
+
+* appthreat (default)
+* app
+* antivirus
+* wildfire
+* wildfire2
+
+Note: The *wildfire* package is for PAN-OS 7.0 and lower, the *wildfire2*
+package is for PAN-OS 7.1 and higher.
 
 Disclaimer
 ----------
