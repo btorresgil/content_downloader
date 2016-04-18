@@ -51,12 +51,28 @@ class UnknownPackage(StandardError):
     pass
 
 class ContentDownloader(object):
+    """Checks for new content packages and downloads the latest"""
 
+    """This PACKAGE variable can be modified to reflect any changes in the URL's or
+    to add additional packages as they come available. It is a basic python
+    dictionary where the key is the string usually passed as a command line
+    argument to specify a package, and the value is the part of the file download
+    URL between the hostname and the package version. For example, a download URL
+    takes the form:
+
+        https://downloads.paloaltonetworks.com/content/panupv2-all-contents-578-2874
+
+    The value in the PACKAGE dict should be the part between the
+    'downloads.paloaltonetworks.com/' and the '-578-2874' (the version).
+
+    Maintenance of this script involves keeping these values up-to-date with the actual
+    URL to download the file.
+    """
     PACKAGE = {
         "appthreat": "content/panupv2-all-contents",
-        "app": "content/panupv2-all-apps",
+        "app":       "content/panupv2-all-apps",
         "antivirus": "virus/panup-all-antivirus",
-        "wildfire": "wildfire/panup-all-wildfire",
+        "wildfire":  "wildfire/panup-all-wildfire",
         "wildfire2": "wildfire/panupv2-all-wildfire",
     }
 
