@@ -3,6 +3,9 @@ Palo Alto Networks ContentPack Downloader
 
 Checks for the latest content pack and downloads it if needed.
 
+**----====== This script no longer works as of January 2018 ======----**  
+Changes were made to the Palo Alto Networks Support Portal login page. There doesn't seem to be an easy solution to make this script work again, though I welcome any pull requests to try and fix it.
+
 Install
 -------
 
