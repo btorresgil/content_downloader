@@ -35,20 +35,25 @@ import cookielib
 import logging
 import ConfigParser
 import argparse
+import json
+from datetime import datetime
 
 import mechanize
-# Disable insecure platform warnings
+import requests
+
+# Optional: Disable insecure platform warnings
 #import requests.packages.urllib3
 #requests.packages.urllib3.disable_warnings()
 
 class LoginError(StandardError):
     pass
 
-class UpdateError(StandardError):
+class GetLinkError(StandardError):
     pass
 
 class UnknownPackage(StandardError):
     pass
+
 
 class ContentDownloader(object):
     """Checks for new content packages and downloads the latest"""
@@ -68,29 +73,29 @@ class ContentDownloader(object):
     Maintenance of this script involves keeping these values up-to-date with the actual
     URL to download the file.
     """
-    PACKAGE = {
-        "appthreat": "content/panupv2-all-contents",
-        "app":       "content/panupv2-all-apps",
-        "antivirus": "virus/panup-all-antivirus",
-        "wildfire":  "wildfire/panup-all-wildfire",
-        "wildfire2": "wildfire/panupv2-all-wildfire",
+    PACKAGE_KEY = {
+        "appthreat":  "CONTENTS",
+        "app":        "APPS",
+        "antivirus":  "VIRUS",
+        "wildfire":   "WILDFIRE_OLDER",
+        "wildfire2":  "WILDFIRE_NEWEST",
+        "wf500":      "WF-500 CONTENT",
+        "traps":      "TRAPS3.4",
+        "clientless": "GPCONTENTS",
     }
-
-    SUPPORT_URL = "https://support.paloaltonetworks.com"
-    UPDATE_URL = "https://support.paloaltonetworks.com/Updates/DynamicUpdates"
+    LOGIN_URL = "https://identity.paloaltonetworks.com/idp/startSSO.ping?PartnerSpId=supportCSP&TargetResource=https://support.paloaltonetworks.com/Updates/DynamicUpdates/245"
+    UPDATE_URL = "https://support.paloaltonetworks.com/Updates/DynamicUpdates/245"
+    GET_LINK_URL = "https://support.paloaltonetworks.com/Updates/GetDownloadUrl"
 
     def __init__(self, username, password, package="appthreat", debug=False):
         if package is None:
             package = "appthreat"
-        if package not in self.PACKAGE:
+        if package not in self.PACKAGE_KEY:
             raise UnknownPackage("Unknown package type: %s" % package)
         self.username = username
         self.password = password
         self.package = package
-        self.path = self.PACKAGE[package]
-        self.prefix = self.path.split("/")[-1]
-        self.latestversion = None
-        self.fileurl = None
+        self.key = self.PACKAGE_KEY[package]
         self.cj = cookielib.LWPCookieJar()
         try:
             self.cj.load("cookies.txt", ignore_discard=True, ignore_expires=True)
@@ -121,17 +126,24 @@ class ContentDownloader(object):
 
     def login(self):
         logging.info("Logging in")
-        self.browser.open(self.SUPPORT_URL)
+        self.browser.open(self.LOGIN_URL)
         self.browser.select_form(nr=0)
         self.browser.form['Email'] = self.username
         self.browser.form['Password'] = self.password
         self.browser.submit()
+        # This has resulted in an error page
+        if self.browser.response().read().find("The user name or password provided is incorrect.") != -1:
+            raise LoginError("Username or password is incorrect")
+        if self.browser.response().read().find(
+                "Since your browser does not support JavaScript,"
+                " you must press the Resume button once to proceed."
+        ) == -1: # Getting this message is good
+            raise LoginError("Failed to login")
         # No Javascript, so have to submit the "Resume form"
+        self.browser.open(self.UPDATE_URL)
         self.browser.select_form(nr=0)
         self.browser.submit()
         html = self.browser.response().read()
-        if html.find("Welcome") == -1:
-            raise LoginError("Failed to login")
         # Save login cookie
         self._save_cookies()
 
@@ -145,36 +157,50 @@ class ContentDownloader(object):
         elif result.find("<h4>You are not authorized to perform this action.</h4>") != -1:
             needlogin = True
             logging.debug("Got not authorized page")
+        elif result.find('<img src="/assets/img/pan-loading.gif" alt="Loading"/>') != -1:
+            needlogin = True
+            logging.debug("Got loading screen")
         if needlogin:
             logging.info("Not logged in.")
             self.login()
             logging.info("Checking for new content updates (2nd attempt)")
             result = self._check()
-        file_url = "https://downloads.paloaltonetworks.com/" + self.path
-        try:
-            # Grab the first link that matches the regex,
-            # which is the download link for the first dynamic update
-            url = list(self.browser.links(url_regex=file_url))[0].url
-        except IndexError:
-            raise UpdateError("Unable to get content update list")
-        # Add the version to the regex to extract the latest version number
-        file_regex = file_url + "-([\d-]*)\?"
-        # Get the version
-        version = re.search(file_regex, url).group(1)
-        self.latestversion = version
-        self.fileurl = url
-        return version, url
+        # Grab the __RequestVerificationToken
+        self.browser.select_form(nr=0)
+        token = self.browser.form['__RequestVerificationToken']
+        match = re.search(r'"data":({"Data":.*?"Total":\d+,"AggregateResults":null})', result)
+        updates = json.loads(match.group(1))
+        return token, updates['Data']
 
     def _check(self):
         self.browser.open(self.UPDATE_URL)
         return self.browser.response().read()
 
-    def download(self, download_dir):
-        if self.latestversion is not None and self.fileurl is not None:
-            os.chdir(download_dir)
-            filename = self.prefix+"-"+self.latestversion
-            self.browser.retrieve(self.fileurl, filename)
-            return filename
+    def find_latest_update(self, updates):
+        updates_of_type = [u for u in updates if u['Key'] == self.key]
+        updates_sorted = sorted(updates_of_type, key=lambda x: datetime.strptime(x['ReleaseDate'], '%Y-%m-%dT%H:%M:%S'))
+        latest = updates_sorted[-1]
+        logging.info("Found latest update:  {0}  Released {1}".format(latest['FileName'], latest['ReleaseDate']))
+        return latest['FileName'], latest['FolderName'], latest['VersionNumber']
+
+    def get_download_link(self, token, filename, foldername):
+        headers = {'Content-Type': 'application/json; charset=UTF-8',
+                   'Accept': 'application/json, text/javascript, */*; q=0.01',
+                   'X-Requested-With': 'XMLHttpRequest',
+                   }
+        payload = {'__RequestVerificationToken': token,
+                   'FileName': filename,
+                   'FolderName': foldername,
+                   }
+        response = requests.post(self.GET_LINK_URL, json=payload, headers=headers).json()
+        if 'Success' not in response or not response['Success']:
+            raise GetLinkError("Failure getting download link: {0}".format(response))
+        return response['DownloadUrl']
+
+    def download(self, download_dir, url, filename):
+        os.chdir(download_dir)
+        self.browser.retrieve(url, filename)
+        return filename
 
     def _save_cookies(self):
         self.cj.save("cookies.txt", ignore_discard=True, ignore_expires=True)
@@ -195,8 +221,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Download the latest Palo Alto Networks dynamic content update')
     parser.add_argument('-v', '--verbose', action='count', help="Verbose (-vv for extra verbose)")
     parser.add_argument('-p', '--package', help="Options: appthreat, app, antivirus, wildfire (for PAN-OS 7.0 and"
-                                                " lower), or wildfire2 (for PAN-OS 7.1 and higher). If ommited, "
-                                                "defaults to 'appthreat'.")
+                                                " lower), or wildfire2 (for PAN-OS 7.1 and higher), wf500, traps,"
+                                                " clientless. If ommited, defaults to 'appthreat'.")
     return parser.parse_args()
 
 
@@ -226,23 +252,27 @@ def main():
     content_downloader = ContentDownloader(username=username, password=password, package=options.package, debug=debugenabled)
 
     # Check latest version. Login if necessary.
-    latestversion, fileurl = content_downloader.check()
+    token, updates = content_downloader.check()
+
+    # Determine latest update
+    filename, foldername, latestversion = content_downloader.find_latest_update(updates)
 
     # Get previously downloaded versions from download directory
     downloaded_versions = []
     for f in os.listdir(download_dir):
-        match = re.match(content_downloader.prefix + "-([\d-]*)$", f)
-        if match is not None:
-            downloaded_versions.append(match.group(1))
+        downloaded_versions.append(f)
 
     # Check if already downloaded latest and do nothing
-    if latestversion in downloaded_versions:
-        logging.info("Already downloaded latest version: %s" % latestversion)
+    if filename in downloaded_versions:
+        logging.info("Already downloaded latest version: {0}".format(filename))
         sys.exit(0)
+
+    # Get download URL
+    fileurl = content_downloader.get_download_link(token, filename, foldername)
 
     # Download latest version to download directory
     logging.info("Downloading latest version: %s" % latestversion)
-    filename = content_downloader.download(download_dir)
+    filename = content_downloader.download(download_dir, fileurl, filename)
     if filename is not None:
         logging.info("Finished downloading file: %s" % filename)
     else:

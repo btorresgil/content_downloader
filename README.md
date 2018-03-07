@@ -3,8 +3,8 @@ Palo Alto Networks ContentPack Downloader
 
 Checks for the latest content pack and downloads it if needed.
 
-**----====== This script no longer works as of January 2018 ======----**  
-Changes were made to the Palo Alto Networks Support Portal login page. There doesn't seem to be an easy solution to make this script work again, though I welcome any pull requests to try and fix it.
+**----=== UPDATE Feb 2018 ===----**  
+In January, changes were made to the Palo Alto Networks Support Portal that broke this script. It has now been updated to work with the new Support Portal.
 
 Install
 -------
@@ -14,8 +14,12 @@ Download the files in this repository.
 Install mechanize:
 
     pip install mechanize
+    pip install requests
+    
     - or -
+    
     easy_install mechanize
+    easy_install requests
 
 Configure
 ---------
@@ -57,6 +61,9 @@ Possible values for `-p` argument:
 * antivirus
 * wildfire
 * wildfire2
+* wf500
+* traps
+* clientless
 
 Note: The *wildfire* package is for PAN-OS 7.0 and lower, the *wildfire2*
 package is for PAN-OS 7.1 and higher.
