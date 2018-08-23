@@ -157,6 +157,9 @@ class ContentDownloader(object):
         elif result.find("<h4>You are not authorized to perform this action.</h4>") != -1:
             needlogin = True
             logging.debug("Got not authorized page")
+        elif result.find('webData.pageName = "support:portal:Unauth Home"') != -1:
+            needlogin = True
+            logging.debug("Got unauth screen")
         elif result.find('<img src="/assets/img/pan-loading.gif" alt="Loading"/>') != -1:
             needlogin = True
             logging.debug("Got loading screen")
@@ -210,7 +213,7 @@ def get_config(filename):
     config = ConfigParser.SafeConfigParser({"filedir": ""})
     config.read(filename)
     username = config.get('config', 'username')
-    password = config.get('config', 'password')
+    password = config.get('config', 'password', raw=True)
     download_dir = config.get('config', 'filedir')
     if download_dir == "":
         download_dir = os.getcwd()
